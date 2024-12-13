@@ -1,0 +1,523 @@
+---
+title: "Cytotox Hg"
+output: 
+  html_notebook: 
+    toc: true
+    number_sections: true
+---
+
+```{r}
+Sys.setenv(LANG = "en_US.UTF-8")
+
+library(tidyverse)
+library(drc)
+```
+
+# Raw data import: ImageJ macro results file, each line is a segmented kernel, code to be modified according to image file name
+```{r}
+path <- choose.files(caption = "Choose Results file saved from ImageJ")
+results <- read_csv(path)
+results <- results %>% rename(nuc_id = ...1) #rename first column 
+```
+# Variable formatting
+```{r}
+# in Label, replace unwanted characters with “_”
+results <- results %>% mutate(Label = str_replace_all(Label, c(" - " = "_", " " = "_")))
+results
+
+# Separation of the "label" information into individual variables
+results <- results %>% separate(Label, sep ="_", into = c("metal", "conc", "unit", "replicate", "date", "image_id", "wave", "chan")) %>% mutate(conc = as.numeric(conc), image_id = as.numeric(image_id))
+results
+
+## Adds dish identifier to each line
+results <- results %>% mutate(dish = "")
+cytox <- results %>% mutate(dish = ifelse(replicate == "A" & conc > 5, "D1", dish)) %>% mutate(dish = ifelse(replicate == "A" & conc < 50, "D2", dish)) %>% mutate(dish = ifelse(replicate == "B" & conc > 5, "D3", dish)) %>% mutate(dish = ifelse(replicate == "B" & conc < 50, "D4", dish)) %>% mutate(dish = ifelse(replicate == "C" & conc > 5, "D5", dish)) %>% mutate(dish = ifelse(replicate == "C" & conc < 50, "D6", dish))
+cytox
+
+# Verification of addition (summary)
+cytox %>% count(dish, replicate, conc)
+```
+# List of all measured nuclei: cytox table saved as .csv file
+```{r}
+write.csv(cytox, file = "all_measured_nuclei_cytox_R.csv")
+```
+
+# -----------
+
+# Nuclei area by concentration and channel
+```{r}
+p0 <- ggplot(cytox, aes(Area)) +
+  geom_freqpoly(aes(color = chan), binwidth = 1) +
+  facet_wrap(~conc) + scale_color_manual(name = "channel", values = c("blue2", "green2")) +
+  labs(title = "nuclei area distribution", x = "nuclei area")
+p0
+ggsave("p0_nuclei_area_per_concentration_channel.pdf", plot = p0, device = "pdf", width = 7, height = 5, unit="in")
+```
+
+
+# Nuclei area in DAPI for each coverslip
+```{r}
+p1 <- ggplot(filter(cytox, chan == "DAPI")) +
+  geom_boxplot(aes(group = image_id, image_id, Area, color = replicate)) +
+  facet_grid(conc ~ replicate) + labs(title = "nuclei area in DAPI by coverslip", subtitle = "several images per coverslip (image id)", x = "image id")
+p1
+ggsave("p1_nuclei_area_DAPI_par_coverslip.pdf", plot = p1, device = "pdf", width = 7, height = 5, unit="in")
+```
+
+# Nuclei area in GFP for each coverslip
+```{r}
+p2 <- ggplot(filter(cytox, chan == "GFP")) +
+  geom_boxplot(aes(group = image_id, image_id, Area, color = replicate)) +
+  facet_grid(conc ~ replicate) + labs(title = "nuclei area in GFP by coverslip", subtitle = "several images per coverslip (image id)", x = "image id")
+p2
+ggsave("p2_nuclei_area_GFP_per_coverslip.pdf", plot = p2, device = "pdf", width = 7, height = 5, unit="in")
+```
+
+# -----------
+
+# Data analysis, data tydying with nuclei number per individual image
+```{r}
+# counts the number of nuclei per image and channel
+nuc_count_list <- cytox %>% group_by(conc, image_id, replicate, dish, chan) %>% summarise(nuclei = n())
+nuc_count_list
+# creates a tibble with the number of DAPI and GFP nuclei for each image
+nuc_count <- pivot_wider(nuc_count_list, names_from = chan, values_from = nuclei)
+nuc_count
+```
+
+# Data analysis, calculation of mortality and viability in individual images
+```{r}
+# computes viability and mortality based on the number of GFP(=dead) and DAPI(=dead+alive) values
+res_all <- nuc_count %>% mutate(mortality = GFP/DAPI, viability = 1 - (GFP/DAPI)) %>% rownames_to_column(var = "uniq_id")
+res_all
+write.csv(res_all, file = "all_viability_values_R.csv")
+```
+
+## Data analysis, nuclei count per image
+```{r}
+p3 <- ggplot(res_all) +
+  geom_line(aes(image_id, DAPI, color = "DAPI")) +
+  geom_point(aes(image_id, DAPI, color = "DAPI"), color = "blue2") +
+  geom_line(aes(image_id, GFP, color = "GFP"), color = "green2") +
+  geom_point(aes(image_id, GFP, color = "GFP")) +
+  scale_color_manual(name = "channel", values = c("blue2", "green2")) +
+  labs(title = "nuclei count per coverslip", subtitle = "count by individual image, concentration and replicate", y = "count", x = "image id") +
+  facet_wrap(conc~replicate)
+p3
+ggsave("p3_nuclei_count_percoverslip.pdf", plot = p3, device = "pdf", width = 7, height = 5, unit="in")
+```
+## Data analysis, viability per image
+```{r}
+p4 <- ggplot(res_all, aes(image_id, viability) ) +
+  geom_line() +
+  geom_point() +
+  geom_point(data = filter(res_all, viability <0), aes(image_id, viability), color = "red") +
+  facet_wrap(conc~replicate) +
+  labs(title = "viability per individual image", subtitle = "viability by individual image, concentration and replicate", y = "viability", x = "image id")
+p4
+ggsave("p4_viability_individual_image.pdf", plot = p4, device = "pdf", width = 7, height = 5, unit="in")
+```
+## Data analysis of dishes, new table with dish data
+```{r}
+res_all_dish <- res_all %>% group_by(dish, conc) %>% summarise(DAPI = sum(DAPI), GFP = sum(GFP), viability = mean(viability))
+res_all_dish
+check_nuclei_number <- sum(res_all_dish$DAPI)+sum(res_all_dish$GFP)
+cat(c("total nuclei count (check) =", check_nuclei_number))
+```
+# -----------
+
+# DAPI nuclei count by dish
+```{r}
+ggplot(res_all_dish) +
+  geom_boxplot(aes(dish, DAPI)) +
+  geom_jitter(aes(dish, DAPI, color = factor(conc)), size = 3, alpha = 0.7, width = 0.2) +
+  labs(title = "DAPI nuclei count by dish", y ="count (DAPI)") +
+  scale_color_discrete(name = "conc")
+```
+
+# GFP nuclei count by dish
+```{r}
+ggplot(res_all_dish) +
+  geom_boxplot(aes(dish, GFP)) +
+  geom_jitter(aes(dish, GFP, color = factor(conc)), size = 3, alpha = 0.7, width = 0.2) +
+  labs(title = "GFP nuclei count by dish", y ="count (GFP)") +
+  scale_color_discrete(name = "conc")
+```
+# Viability by dish
+```{r}
+ggplot(res_all_dish) +
+  geom_boxplot(aes(dish, viability)) +
+  geom_jitter(aes(dish, viability, color = factor(conc)), size = 3, alpha = 0.7, width = 0.2) +
+  labs(title = "viability by dish") +
+  scale_color_discrete(name = "conc")
+```
+
+# -----------
+
+# 'Abnormal' images with negative viability: discard or set viability to 0 if high concentration
+Several images have viability<0 and correspond to high Hg concentrations, set these viability values to 0
+```{r}
+# Selects only images with negative viability
+res_discarded <- filter(res_all, viability <0)
+res_discarded
+# Change negative viability values to 0 in this specific case
+res_all <- res_all %>% mutate(viability =ifelse(viability<0, 0, viability))
+```
+
+
+
+# Data analysis, viability by coverslip and replicate
+
+## The coverslip 1µM replicate C is different from the other two replicates, to be taken out of the analysis!
+```{r}
+# boxplot of viability
+p5 <- ggplot(res_all) + 
+  geom_boxplot(aes(replicate, viability, color = replicate)) +
+  geom_jitter(aes(replicate, viability, color = replicate)) +
+  facet_wrap(~conc) +
+  labs(title = "viability by coverslip and replicate", subtitle = "(NB: images with viability <0 removed)", y = "viability")
+p5
+ggsave("p5_viability_coverslip_and_replicate.pdf", plot = p5, device = "pdf", width = 7, height = 5, unit="in")
+```
+## Data suppression @ 1µM replicate C
+```{r}
+res_all_filtered <- res_all %>% filter (!(conc == 1 & replicate == "C"))
+
+write.csv(res_all_filtered, file = "all_viability_filtered_values_R.csv")
+
+ggplot(res_all_filtered) + 
+  geom_boxplot(aes(replicate, viability, color = replicate)) +
+  geom_jitter(aes(replicate, viability, color = replicate)) +
+  facet_wrap(~conc) +
+  labs(title = "viability by coverslip and replicate", subtitle = "(NB: images with viability <0 removed)", y = "viability")
+```
+# Calculation of the total number of analyzed and selected cells
+```{r}
+n_cells <- res_all_filtered %>% group_by() %>% summarise(total = sum (DAPI))
+n_cells
+```
+# ------------
+
+# Summary table of results
+```{r}
+mean_viab_conc <- res_all_filtered %>% group_by(conc) %>% summarise(mean_viability = mean(viability), sd = sd(viability), median_viability = median(viability), n_DAPI = sum(DAPI), n_GFP= sum(GFP), n_images = n())
+viab_0 <- filter(mean_viab_conc, conc == 0)$mean_viability
+mean_viab_conc <- mean_viab_conc %>% mutate(relative_viability = mean_viability/viab_0)
+mean_viab_conc
+write.csv(mean_viab_conc, file="summary_table_results_R.csv")
+```
+
+# Summary table of results grouped by concentration and replicate
+```{r}
+mean_viab_conc_replicate <- res_all_filtered %>% group_by(conc, replicate) %>% summarise(mean_viability = mean(viability), sd = sd(viability), median_viability = median(viability), n_DAPI = sum(DAPI), n_GFP= sum(GFP), n_images = n())
+
+# Calculation of normalized viability for each replicate (= absolute (raw) viability / mean viability of 3 replicates at 0 µM)
+mean_viab_conc_replicate <- mean_viab_conc_replicate %>% mutate(relative_viability = 0)
+
+mean_viab_conc_replicate <- mean_viab_conc_replicate %>% mutate(relative_viability = mean_viability/viab_0)
+
+mean_viab_conc_replicate
+write.csv(mean_viab_conc_replicate, file="summary_table_results_filtered_replicate_R.csv")
+```
+
+# Summary viability plot
+```{r}
+p6 <- ggplot(mean_viab_conc) +
+  geom_point(aes(conc, mean_viability, color = "absolute_viability")) +
+  geom_line(aes(conc, mean_viability, color = "absolute_viability")) +
+  geom_point(aes(conc, relative_viability, color = "relative_viability")) +
+  geom_line(aes(conc, relative_viability, color = "relative_viability")) +
+  geom_errorbar(aes(x= conc, y = mean_viability, ymin=mean_viability-sd, ymax = mean_viability+sd, color = "absolute_viability")) +
+  geom_errorbar(aes(x= conc, y = relative_viability, ymin=relative_viability-sd, ymax = relative_viability+sd, color = "relative_viability")) +
+  labs(y="viability") +
+  scale_x_log10()
+p6
+ggsave("p6_summary_viability_plot.pdf", plot = p6, device = "pdf", width = 7, height = 5, unit="in")
+```
+
+# Summary viability table and plot grouped by replicate
+```{r}
+p7 <- ggplot(mean_viab_conc_replicate) +
+  geom_point(aes(conc, mean_viability, shape = replicate), color= "black", size = 2, alpha = 0.5) +
+  geom_line(aes(group = replicate, conc, mean_viability, color = "absolute viability")) +
+  geom_point(aes(conc, relative_viability, shape = replicate), color= "black", size = 2, alpha = 0.5) +
+  geom_line(aes(group = replicate, conc, relative_viability, color = "relative viability")) +
+  scale_x_log10() +
+  ylab("viability")
+p7
+ggsave("p7_summary_viability_plot_by_replicate.pdf", plot = p7, device = "pdf", width = 7, height = 5, unit="in")
+```
+# ----------
+
+# Dose-response curves and fit for normalized viability
+
+## Comparison of the three models LL4, W14 and W24 for the dose-response function fit
+
+Use only 4-parameter fits without constraining either Lower limit or Upper limit.
+The best-fitting model is the one with the lowest IC value in the comparison test.
+
+```{r}
+model.LL4<- drm(relative_viability~conc, data=mean_viab_conc_replicate, fct=LL.4(fixed=c(NA, NA, NA, NA), names = c("Slope", "Lower Limit", "Upper Limit", "ED50")))
+
+mselect(model.LL4, fctList = list(W1.4(fixed=c(NA, NA, NA, NA)), W2.4(fixed=c(NA, NA, NA, NA))),linreg=TRUE) 
+```
+## Plot for models LL4, W14 and W24
+
+```{r}
+model.LL4 <-  drm(relative_viability~conc, data=mean_viab_conc_replicate, fct=LL.4(fixed=c(NA, NA, NA, NA), names = c("Slope", "Lower Limit", "Upper Limit", "ED50")))
+
+model.W14 <-  drm(relative_viability~conc, data=mean_viab_conc_replicate, fct=W1.4(fixed=c(NA, NA, NA, NA), names = c("Slope", "Lower Limit", "Upper Limit", "ED50")))
+
+model.W24 <-  drm(relative_viability~conc, data=mean_viab_conc_replicate, fct=W2.4(fixed=c(NA, NA, NA, NA), names = c("Slope", "Lower Limit", "Upper Limit", "ED50")))
+
+
+plot(model.LL4, broken = TRUE, xlab="Concentration (µM), LL4(black), W14(red), W24(green) ", ylab="relative viability", type='all',lty=1, lwd=2,)
+
+plot(model.W14, add = TRUE, col="red2",lty=2, lwd=2)
+
+plot(model.W24, add = TRUE, col="green2",lty=2, lwd=2)
+```
+## Summary of LL4, W14 and W24 model parameters
+
+```{r}
+summary(model.LL4)
+summary(model.W14)
+summary(model.W24)
+# Saves the output to a text file
+capture.output(summary(model.LL4), summary(model.W14), summary(model.W24), file = "Models_summary_R.txt")
+```
+
+
+## Calculation of IC10 and IC50 on models LL4, W14 and W24
+
+```{r}
+IC_LL4 <- as_tibble(ED(model.LL4, c(10, 20, 50), interval="delta"), rownames = NA) %>% rownames_to_column(var = "IC") %>% separate(IC, sep=":", into=c("A", "B", "IC")) %>% dplyr::select(-A, -B) %>% mutate(IC = as.numeric(IC), model = "LL4") %>% relocate(model)
+
+IC_W14 <- as_tibble(ED(model.W14, c(10, 20, 50), interval="delta"), rownames = NA) %>% rownames_to_column(var = "IC") %>% separate(IC, sep=":", into=c("A", "B", "IC")) %>% dplyr::select(-A, -B) %>% mutate(IC = as.numeric(IC), model = "W14") %>% relocate(model)
+
+IC_W24 <- as_tibble(ED(model.W24, c(10, 20, 50), interval="delta"), rownames = NA) %>% rownames_to_column(var = "IC") %>% separate(IC, sep=":", into=c("A", "B", "IC")) %>% dplyr::select(-A, -B) %>% mutate(IC = as.numeric(IC), model = "W24") %>% relocate(model)
+
+IC_3mods <- bind_rows(IC_LL4, IC_W14, IC_W24)
+
+IC_3mods
+
+write_csv(file = "IC_3models_R.csv", IC_3mods)
+```
+
+
+## Calculation of IC10 and IC50, averaged and weighted over the three models LL4, W14 and W24
+```{r}
+maED(model.LL4, list(W1.4(fixed=c(NA, NA, NA, NA)), W2.4(fixed=c(NA, NA, NA, NA))),c(10, 20, 50), interval="kang")
+
+capture.output(maED(model.LL4, list(W1.4(fixed=c(NA, NA, NA, NA)), W2.4(fixed=c(NA, NA, NA, NA))),c(10, 20, 50), interval="kang"), file ="IC10_IC50_mean_output_R.txt")
+
+IC_mean_model <- as_tibble(maED(model.LL4, list(W1.4(fixed=c(NA, NA, NA, NA)), W2.4(fixed=c(NA, NA, NA, NA))),c(10, 20, 50), interval="kang", display = FALSE), rownames = NA) %>% rownames_to_column(var = "IC_mean") %>% separate(IC_mean, sep=":", into=c("A", "B", "IC_mean")) %>% dplyr::select(-A, -B) %>% mutate(IC_mean = as.numeric(IC_mean))
+
+IC_10_mean <- round(filter(IC_mean_model, IC_mean == 10)$Estimate, 2)
+IC_20_mean <- round(filter(IC_mean_model, IC_mean == 20)$Estimate, 2)
+IC_50_mean <- round(filter(IC_mean_model, IC_mean == 50)$Estimate, 2)
+
+IC_mean_model
+
+write_csv(file = "IC_mean_model_R.csv", IC_mean_model)
+```
+
+## Plot of the 3 models three models LL4, W14 and W24 with ggplot2 (see article by Ritz et al. Dose-response Analysis Using R, PLOS One 2015, in supplementary)
+We use the drc::predict function to calculate the coordinates of the points over the chosen concentration range
+
+
+### Data preparation
+
+```{r, warning=FALSE, message=FALSE}
+# creation of the extended concentration range: must be a dataframe
+newdata2 <- data.frame(conc = seq(0, 10000, length=100000)) # variable conc from 0 to 10000 in steps of 0.1
+
+# calculation based on models LL4, W14 and W24
+predmod.LL4 <- predict(model.LL4, newdata = newdata2, interval="confidence") 
+predmod.W14 <- predict(model.W14, newdata = newdata2, interval="confidence") 
+predmod.W24 <- predict(model.W24, newdata = newdata2, interval="confidence") 
+```
+
+
+```{r}
+# conversion of dataframes into tibbles for easier merging and manipulation
+
+newdata2 <- as_tibble(newdata2)
+
+predmod.LL4 <- as_tibble(predmod.LL4)
+predmod.LL4 <- predmod.LL4 %>% rename(Prediction.LL4 = Prediction, Lower.LL4 = Lower, Upper.LL4 = Upper)
+
+predmod.W14 <- as_tibble(predmod.W14)
+predmod.W14 <- predmod.W14 %>% rename(Prediction.W14 = Prediction, Lower.W14 = Lower, Upper.W14 = Upper)
+
+predmod.W24 <- as_tibble(predmod.W24)
+predmod.W24 <- predmod.W24 %>% rename(Prediction.W24 = Prediction, Lower.W24 = Lower, Upper.W24 = Upper)
+
+# merging the four tables
+dosefit_3mods <-bind_cols(newdata2, predmod.LL4, predmod.W14, predmod.W24)
+
+# Calculation of the mean of the 3 curves
+dosefit_3mods <- dosefit_3mods %>% rowwise %>% mutate(mean.Prediction = mean(c(Prediction.LL4, Prediction.W14, Prediction.W24)))
+head(dosefit_3mods)
+```
+
+### Plot of the 3 curves
+```{r}
+y_IC10_mean <- max(dosefit_3mods$mean.Prediction) - 0.1*(max(dosefit_3mods$mean.Prediction) -  min(dosefit_3mods$mean.Prediction)) # calculates the mean viability at IC10
+y_IC50_mean <- max(dosefit_3mods$mean.Prediction) - 0.5*(max(dosefit_3mods$mean.Prediction) -  min(dosefit_3mods$mean.Prediction)) # calculates the mean viability at IC50
+
+p9 <- ggplot() +
+   
+  geom_ribbon(data = filter(dosefit_3mods, conc <= 1000), aes(x = conc, y = Prediction.LL4, ymin = Lower.LL4, ymax = Upper.LL4, fill = "LL4"), alpha = 0.1, linetype = "dashed") +
+  geom_line(data = filter(dosefit_3mods, conc <= 1000), aes(conc, Prediction.LL4, color = "LL4"), size =0.5, linetype = "dashed") +
+
+  geom_ribbon(data = filter(dosefit_3mods, conc <= 1000), aes(x = conc, y = Prediction.W14, ymin = Lower.W14, ymax = Upper.W14, fill = "W14"), alpha = 0.1, linetype = "dashed") +
+  geom_line(data = filter(dosefit_3mods, conc <= 1000), aes(conc, Prediction.W14, color = "W14"), linetype = "dashed", size =0.5) +
+
+  geom_ribbon(data = filter(dosefit_3mods, conc <= 1000), aes(x = conc, y = Prediction.W24, ymin = Lower.W24, ymax = Upper.W24, fill = "W24"), alpha = 0.1, linetype = "dashed") +
+  geom_line(data = filter(dosefit_3mods, conc <= 1000), aes(conc, Prediction.W24, color = "W24"), linetype = "dashed", size =0.5) +
+  
+  geom_line(data = filter(dosefit_3mods, conc <= 1000), aes(conc, mean.Prediction, color = "Mean"), size =1) +
+  
+  geom_point(data = mean_viab_conc_replicate, aes(conc, relative_viability)) +
+  
+  geom_point(aes(x = IC_10_mean, y = y_IC10_mean), color = "red2", size = 2) +
+  geom_text(aes(x = IC_10_mean, y = y_IC10_mean), label = paste("IC10 (mean) =", IC_10_mean, "µM"), nudge_x = 0.7, color = "red2") +
+  geom_point(aes(x = IC_50_mean, y = y_IC50_mean), color = "blue2", size = 2) +
+  geom_text(aes(x = IC_50_mean, y = y_IC50_mean), label = paste("IC50 (mean) =", IC_50_mean, "µM"), nudge_x = 0.7, color = "blue2") +
+
+  scale_color_discrete(name = "model") +
+  
+  guides(fill="none") +
+
+  labs(x = "concentration (µM)", y = "viability (norm.)") + 
+  
+  theme_minimal() +
+  
+  scale_x_log10() +
+
+  labs(title = "Hg cytotoxicity", subtitle = paste("IC10 =", IC_10_mean, "µM,", "IC50 =", IC_50_mean, "µM,", "n =", n_cells, "cells")) +
+  
+  coord_cartesian(ylim=c(0,1.1)) # recenters the plot. In Rstudio Options, you need to switch the graphics backends to AGG otherwise the ribbons will disappear!!!
+
+p9
+ggsave("p9_Hg_cytotox_curve_3models.pdf", plot=p9, device = "pdf", width = 7, height = 5, unit="in")
+```
+# ----------
+# Dose-response curves and fit for absolute (raw) viability, without normalization to the mean of 3 measurements at 0 µM
+## Comparison of the 3 models
+```{r}
+model.LL4.raw<- drm(mean_viability~conc, data=mean_viab_conc_replicate, fct=LL.4(fixed=c(NA, NA, NA, NA), names = c("Slope", "Lower Limit", "Upper Limit", "ED50")))
+
+mselect(model.LL4.raw, fctList = list(W1.4(fixed=c(NA, NA, NA, NA)), W2.4(fixed=c(NA, NA, NA, NA))),linreg=TRUE) 
+```
+## Plot for models LL4, W14 and W24
+```{r}
+model.LL4.raw <-  drm(mean_viability~conc, data=mean_viab_conc_replicate, fct=LL.4(fixed=c(NA, NA, NA, NA), names = c("Slope", "Lower Limit", "Upper Limit", "ED50")))
+
+model.W14.raw <-  drm(mean_viability~conc, data=mean_viab_conc_replicate, fct=W1.4(fixed=c(NA, NA, NA, NA), names = c("Slope", "Lower Limit", "Upper Limit", "ED50")))
+
+model.W24.raw <-  drm(mean_viability~conc, data=mean_viab_conc_replicate, fct=W2.4(fixed=c(NA, NA, NA, NA), names = c("Slope", "Lower Limit", "Upper Limit", "ED50")))
+
+plot(model.LL4.raw, broken = TRUE, xlab="Concentration (µM), LL4(black), W14(red), W24(green) ", ylab="viability", type='all',lty=1, lwd=2,)
+
+plot(model.W14.raw, add = TRUE, col="red2",lty=2, lwd=2)
+
+plot(model.W24.raw, add = TRUE, col="green2",lty=2, lwd=2)
+```
+## Calculation of IC10 and IC50 for absolute viability, weighted mean for the three models LL4, W14 and W24
+```{r}
+maED(model.LL4.raw, list(W1.4(fixed=c(NA, NA, NA, NA)), W2.4(fixed=c(NA, NA, NA, NA))),c(10, 50), interval="kang")
+
+capture.output(maED(model.LL4.raw, list(W1.4(fixed=c(NA, NA, NA, NA)), W2.4(fixed=c(NA, NA, NA, NA))),c(10, 50), interval="kang"), file ="IC10_IC50_mean_output_R_raw.txt")
+
+IC_mean_model_raw <- as_tibble(maED(model.LL4.raw, list(W1.4(fixed=c(NA, NA, NA, NA)), W2.4(fixed=c(NA, NA, NA, NA))),c(10, 50), interval="kang", display = FALSE), rownames = NA) %>% rownames_to_column(var = "IC_mean") %>% separate(IC_mean, sep=":", into=c("A", "B", "IC_mean")) %>% dplyr::select(-A, -B) %>% mutate(IC_mean = as.numeric(IC_mean))
+
+IC_10_mean_raw <- round(filter(IC_mean_model_raw, IC_mean == 10)$Estimate, 2)
+IC_50_mean_raw <- round(filter(IC_mean_model_raw, IC_mean == 50)$Estimate, 2)
+
+IC_mean_model_raw
+
+write_csv(file = "IC_mean_model_R_raw.csv", IC_mean_model_raw)
+```
+
+## Plot of the 3 models three models LL4, W14 and W24 with absolute viabilities, without normalsiation at 0 µM, with ggplot2 (see paper by Ritz et al. Dose-response Analysis Using R, PLOS ONE 2015, in the supplementary)
+The drc::predict function is used to calculate the coordinates of the points over the chosen concentration range
+
+
+### Data preparation
+
+```{r, warning=FALSE, message=FALSE}
+# creation of the extended concentration range: must be a dataframe
+newdata3 <- data.frame(conc = seq(0, 10000, length=100000)) # variable conc from 0 to 10000 in steps of 0.1
+
+# calculation based on LL4, W14 and W24 models
+predmod.LL4.raw <- predict(model.LL4.raw, newdata = newdata3, interval="confidence") 
+predmod.W14.raw <- predict(model.W14.raw, newdata = newdata3, interval="confidence") 
+predmod.W24.raw <- predict(model.W24.raw, newdata = newdata3, interval="confidence") 
+```
+
+
+```{r}
+# conversion of dataframes into tibbles for easier merging and manipulation
+
+newdata3 <- as_tibble(newdata3)
+
+predmod.LL4.raw <- as_tibble(predmod.LL4.raw)
+predmod.LL4.raw <- predmod.LL4.raw %>% rename(Prediction.LL4.raw = Prediction, Lower.LL4.raw = Lower, Upper.LL4.raw = Upper)
+
+predmod.W14.raw <- as_tibble(predmod.W14.raw)
+predmod.W14.raw <- predmod.W14.raw %>% rename(Prediction.W14.raw = Prediction, Lower.W14.raw = Lower, Upper.W14.raw = Upper)
+
+predmod.W24.raw <- as_tibble(predmod.W24.raw)
+predmod.W24.raw <- predmod.W24.raw %>% rename(Prediction.W24.raw = Prediction, Lower.W24.raw = Lower, Upper.W24.raw = Upper)
+
+# merging the four tables
+dosefit_3mods_raw <-bind_cols(newdata3, predmod.LL4.raw, predmod.W14.raw, predmod.W24.raw)
+
+# Calculation of the mean of the 3 curves
+dosefit_3mods_raw <- dosefit_3mods_raw %>% rowwise %>% mutate(mean.Prediction = mean(c(Prediction.LL4.raw, Prediction.W14.raw, Prediction.W24.raw)))
+head(dosefit_3mods_raw)
+```
+
+### Plot of the 3 curves
+```{r}
+y_IC10_mean_raw <- max(dosefit_3mods_raw$mean.Prediction) - 0.1*(max(dosefit_3mods_raw$mean.Prediction) -  min(dosefit_3mods_raw$mean.Prediction)) # calculates mean viability at IC10
+y_IC50_mean_raw <- max(dosefit_3mods_raw$mean.Prediction) - 0.5*(max(dosefit_3mods_raw$mean.Prediction) -  min(dosefit_3mods_raw$mean.Prediction)) # calculates average viability at IC50
+
+p10 <- ggplot() +
+   
+  geom_ribbon(data = filter(dosefit_3mods_raw, conc <= 1000), aes(x = conc, y = Prediction.LL4.raw, ymin = Lower.LL4.raw, ymax = Upper.LL4.raw, fill = "LL4"), alpha = 0.1, linetype = "dashed") +
+  geom_line(data = filter(dosefit_3mods_raw, conc <= 1000), aes(conc, Prediction.LL4.raw, color = "LL4"), size =0.5, linetype = "dashed") +
+
+  geom_ribbon(data = filter(dosefit_3mods_raw, conc <= 1000), aes(x = conc, y = Prediction.W14.raw, ymin = Lower.W14.raw, ymax = Upper.W14.raw, fill = "W14"), alpha = 0.1, linetype = "dashed") +
+  geom_line(data = filter(dosefit_3mods_raw, conc <= 1000), aes(conc, Prediction.W14.raw, color = "W14"), linetype = "dashed", size =0.5) +
+
+  geom_ribbon(data = filter(dosefit_3mods_raw, conc <= 1000), aes(x = conc, y = Prediction.W24.raw, ymin = Lower.W24.raw, ymax = Upper.W24.raw, fill = "W24"), alpha = 0.1, linetype = "dashed") +
+  geom_line(data = filter(dosefit_3mods_raw, conc <= 1000), aes(conc, Prediction.W24.raw, color = "W24"), linetype = "dashed", size =0.5) +
+  
+  geom_line(data = filter(dosefit_3mods_raw, conc <= 1000), aes(conc, mean.Prediction, color = "Mean"), size =1) +
+  
+  geom_point(data = mean_viab_conc_replicate, aes(conc, mean_viability)) +
+  
+  geom_point(aes(x = IC_10_mean_raw, y = y_IC10_mean_raw), color = "red2", size = 2) +
+  geom_text(aes(x = IC_10_mean_raw, y = y_IC10_mean_raw), label = paste("IC10 (mean) =", IC_10_mean_raw, "µM"), nudge_x = -0.8, color = "red2") +
+  geom_point(aes(x = IC_50_mean_raw, y = y_IC50_mean_raw), color = "blue2", size = 2) +
+  geom_text(aes(x = IC_50_mean_raw, y = y_IC50_mean_raw), label = paste("IC50 (mean) =", IC_50_mean_raw, "µM"), nudge_x = -0.8, color = "blue2") +
+
+  scale_color_discrete(name = "model") +
+  
+  guides(fill="none") +
+
+  labs(x = "concentration (µM)", y = "viability") + 
+  
+  theme_minimal() +
+  
+  scale_x_log10() +
+
+  labs(title = "Hg cytotoxicity", subtitle = paste("IC10 =", IC_10_mean_raw, "µM,", "IC50 =", IC_50_mean_raw, "µM,", "n =", n_cells, "cells")) +
+ 
+   coord_cartesian(ylim=c(0,NA))
+p10
+ggsave("p10_Hg_cytotox_curve_3models_raw.pdf", plot=p10, device = "pdf", width = 7, height = 5, unit="in")
+```

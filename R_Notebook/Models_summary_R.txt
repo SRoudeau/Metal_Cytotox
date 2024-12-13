@@ -1,0 +1,48 @@
+
+Model fitted: Log-logistic (ED50 as parameter) (4 parms)
+
+Parameter estimates:
+
+                         Estimate Std. Error t-value   p-value    
+Slope:(Intercept)       14.706218  50.490051  0.2913   0.77400    
+Lower Limit:(Intercept)  0.056940   0.028578  1.9924   0.06089 .  
+Upper Limit:(Intercept)  0.952464   0.025843 36.8563 < 2.2e-16 ***
+ED50:(Intercept)        51.912878   6.750620  7.6901 2.999e-07 ***
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+Residual standard error:
+
+ 0.08571031 (19 degrees of freedom)
+
+Model fitted: Weibull (type 1) (4 parms)
+
+Parameter estimates:
+
+                         Estimate Std. Error t-value   p-value    
+Slope:(Intercept)        4.235878   3.762849  1.1257   0.27431    
+Lower Limit:(Intercept)  0.057076   0.028598  1.9958   0.06049 .  
+Upper Limit:(Intercept)  0.952495   0.025845 36.8541 < 2.2e-16 ***
+ED50:(Intercept)        60.208388  10.137712  5.9391 1.022e-05 ***
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+Residual standard error:
+
+ 0.08571354 (19 degrees of freedom)
+
+Model fitted: Weibull (type 2) (4 parms)
+
+Parameter estimates:
+
+                         Estimate Std. Error t-value p-value    
+Slope:(Intercept)       -8.372977   7.028907 -1.1912 0.24824    
+Lower Limit:(Intercept)  0.055996   0.028976  1.9325 0.06835 .  
+Upper Limit:(Intercept)  0.952380   0.025896 36.7774 < 2e-16 ***
+ED50:(Intercept)        50.048156   0.967225 51.7441 < 2e-16 ***
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+Residual standard error:
+
+ 0.08588494 (19 degrees of freedom)
