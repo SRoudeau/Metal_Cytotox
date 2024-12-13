@@ -10,7 +10,7 @@ Eight Hg concentrations were tested:
 - 0, 0.1, 1, 5, 50, 100, 200 and 500 µM
 - in triplicate (A, B and C)
 
-The microscopy images are in the **‘Hg_images’** directory. 
+Samples of microscopy images are in the **‘Hg_images’** directory. 
 
 The name of the images consists of:
 - name of the metal
